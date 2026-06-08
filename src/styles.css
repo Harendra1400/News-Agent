@@ -252,6 +252,97 @@ h1 {
   border-bottom: 1px solid var(--line);
 }
 
+.agent-panel {
+  margin: 0 0 24px;
+  padding: 18px 0 22px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 1.15fr) repeat(2, minmax(220px, 1fr)) minmax(280px, 1.2fr);
+  gap: 10px;
+}
+
+.agent-card {
+  min-height: 158px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.agent-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.agent-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.agent-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.agent-input-row input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 10px;
+}
+
+.agent-input-row button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--green);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 850;
+  padding: 0 12px;
+}
+
+.agent-input-row button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.agent-small,
+.agent-answer {
+  margin: 10px 0 0;
+  color: #41504b;
+  line-height: 1.45;
+}
+
+.agent-card ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #41504b;
+  line-height: 1.45;
+}
+
+.agent-chat {
+  display: flex;
+  flex-direction: column;
+}
+
 .panel-heading {
   margin-bottom: 14px;
 }
@@ -554,6 +645,10 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .agent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .learning-panel {
     position: static;
   }
@@ -583,5 +678,11 @@ h1 {
 
   .article-grid {
     grid-template-columns: 1fr;
+  }
+
+  .agent-grid,
+  .agent-input-row {
+    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 }

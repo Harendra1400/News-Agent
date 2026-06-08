@@ -291,6 +291,27 @@ function extractResponseText(response) {
   return chunks.join("\n");
 }
 
+async function openAiJson(instructions, input, fallback) {
+  if (!process.env.OPENAI_API_KEY) return { ...fallback, mode: "fallback" };
+  try {
+    const response = await fetchJsonWithTimeout("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions,
+        input
+      })
+    }, 30000);
+    return { ...fallback, ...parseModelJson(extractResponseText(response)), mode: "ai" };
+  } catch {
+    return { ...fallback, mode: "fallback", notice: "AI unavailable. Using rule-based agent signals." };
+  }
+}
+
 async function generateAiSummary(sections, quotes) {
   const fallback = fallbackSummary(sections, quotes);
   if (!process.env.OPENAI_API_KEY) {
@@ -340,6 +361,78 @@ async function generateAiSummary(sections, quotes) {
       notice: "AI summary unavailable. Check OPENAI_API_KEY in your hosting environment."
     };
   }
+}
+
+function agentSignals(sections, quotes, interests = []) {
+  const stories = compactStories(sections);
+  const interestWords = interests.map((item) => item.toLowerCase()).filter(Boolean);
+  const scored = stories.map((story) => {
+    const text = `${story.title} ${story.summary}`.toLowerCase();
+    const interestScore = interestWords.filter((word) => text.includes(word)).length * 4;
+    const urgencyScore = /\b(breaking|live|attack|war|surge|falls|jumps|cuts|ban|lawsuit|earnings|ipo|hack|breach|cease-fire)\b/i.test(text) ? 3 : 0;
+    const marketScore = story.category === "markets" ? 1 : 0;
+    return { ...story, score: interestScore + urgencyScore + marketScore };
+  }).sort((a, b) => b.score - a.score);
+  const movers = quotes
+    .filter((quote) => Math.abs(quote.changePercent || 0) >= 1.5)
+    .sort((a, b) => Math.abs(b.changePercent || 0) - Math.abs(a.changePercent || 0))
+    .slice(0, 4);
+  const alerts = [
+    ...scored.filter((story) => story.score >= 3).slice(0, 4).map((story) => `${story.category}: ${story.title}`),
+    ...movers.map((quote) => `${quote.symbol} moved ${quote.changePercent.toFixed(2)}% today.`)
+  ].slice(0, 6);
+
+  return {
+    mode: "fallback",
+    status: "Monitoring latest news and market signals",
+    priorityStories: scored.slice(0, 5),
+    alerts: alerts.length ? alerts : ["No high-priority alerts detected yet."],
+    trendSignals: fallbackSummary(sections, quotes).keyTrends,
+    recommendedActions: [
+      "Read the highest-priority story first.",
+      "Compare market headlines against watchlist moves.",
+      "Save stories that connect to your interests."
+    ],
+    generatedAt: new Date().toISOString()
+  };
+}
+
+async function generateAgentReport(sections, quotes, interests) {
+  const fallback = agentSignals(sections, quotes, interests);
+  const payload = {
+    interests,
+    stories: compactStories(sections),
+    quotes: quotes.map((quote) => ({
+      symbol: quote.symbol,
+      name: quote.name,
+      changePercent: quote.changePercent
+    }))
+  };
+  return openAiJson(
+    "You are an autonomous news monitoring agent. Use only supplied data. Do not provide financial advice. Return valid JSON only.",
+    `Create an autonomous monitoring report from this data:\n${JSON.stringify(payload)}\n\nReturn JSON with keys: status, alerts, trendSignals, recommendedActions, priorityStories. alerts, trendSignals, recommendedActions, and priorityStories must be arrays. priorityStories should contain objects with title, category, source, reason.`,
+    fallback
+  );
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function answerAgentQuestion(question, context) {
+  const fallbackAnswer = {
+    mode: "fallback",
+    answer: "I can monitor the current briefing and highlight patterns, but AI chat needs OPENAI_API_KEY to answer open-ended questions."
+  };
+  if (!question) return fallbackAnswer;
+  return openAiJson(
+    "You are a news agent answering questions from supplied current headlines and market data. Do not invent facts. Return valid JSON only.",
+    `Question: ${question}\n\nContext:\n${JSON.stringify(context)}\n\nReturn JSON with key: answer.`,
+    fallbackAnswer
+  );
 }
 
 async function api(req, res, pathname, searchParams) {
@@ -399,6 +492,39 @@ async function api(req, res, pathname, searchParams) {
       keyPrefix: key ? key.slice(0, 7) : "",
       model: OPENAI_MODEL
     });
+    return;
+  }
+
+  if (pathname === "/api/agent") {
+    const interests = (searchParams.get("interests") || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const [world, technology, markets, quotes] = await Promise.all([
+      loadNews("world"),
+      loadNews("technology"),
+      loadNews("markets"),
+      loadQuotes(["SPY", "QQQ", "DIA", "NVDA", "AAPL", "MSFT", "TSLA", "BTC"])
+    ]);
+    const sections = { world: world.slice(0, 8), technology: technology.slice(0, 8), markets: markets.slice(0, 8) };
+    sendJson(res, 200, await generateAgentReport(sections, quotes, interests));
+    return;
+  }
+
+  if (pathname === "/api/chat" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const [world, technology, markets, quotes] = await Promise.all([
+      loadNews("world"),
+      loadNews("technology"),
+      loadNews("markets"),
+      loadQuotes(["SPY", "QQQ", "DIA", "NVDA", "AAPL", "MSFT", "TSLA", "BTC"])
+    ]);
+    const context = {
+      interests: body.interests || [],
+      stories: compactStories({ world: world.slice(0, 8), technology: technology.slice(0, 8), markets: markets.slice(0, 8) }),
+      quotes
+    };
+    sendJson(res, 200, await answerAgentQuestion(String(body.question || ""), context));
     return;
   }
 

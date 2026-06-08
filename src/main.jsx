@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
+  Bell,
   Bot,
   Bookmark,
   BookmarkCheck,
@@ -9,7 +10,9 @@ import {
   ExternalLink,
   Focus,
   Globe2,
+  MessageSquare,
   Newspaper,
+  Radar,
   RefreshCw,
   Search,
   TrendingUp,
@@ -168,17 +171,83 @@ function SummaryPanel({ summary, loading, error, onRefresh, reflection, setRefle
   );
 }
 
+function AgentPanel({ report, loading, interests, setInterests, onRefresh, question, setQuestion, answer, asking, onAsk }) {
+  return (
+    <section className="agent-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Autonomous Agent</h2>
+          <p>Monitors signals, ranks priorities, and answers questions</p>
+        </div>
+        <Radar size={22} />
+      </div>
+
+      <div className="agent-grid">
+        <div className="agent-card">
+          <label className="agent-label" htmlFor="interests">Tracked interests</label>
+          <div className="agent-input-row">
+            <input id="interests" value={interests} onChange={(event) => setInterests(event.target.value)} placeholder="AI, NVDA, crypto, India, cybersecurity" />
+            <button onClick={onRefresh}>
+              <RefreshCw size={16} />
+              Monitor
+            </button>
+          </div>
+          <p className="agent-small">{loading ? "Checking current signals..." : report?.status || "Ready to monitor."}</p>
+        </div>
+
+        <div className="agent-card">
+          <div className="agent-card-title">
+            <Bell size={17} />
+            <strong>Alerts</strong>
+          </div>
+          <ul>
+            {(report?.alerts || ["No alerts yet."]).slice(0, 5).map((alert) => <li key={alert}>{alert}</li>)}
+          </ul>
+        </div>
+
+        <div className="agent-card">
+          <div className="agent-card-title">
+            <TrendingUp size={17} />
+            <strong>Recommended actions</strong>
+          </div>
+          <ul>
+            {(report?.recommendedActions || ["Refresh the monitor to generate recommendations."]).slice(0, 4).map((action) => <li key={action}>{action}</li>)}
+          </ul>
+        </div>
+
+        <form className="agent-card agent-chat" onSubmit={onAsk}>
+          <div className="agent-card-title">
+            <MessageSquare size={17} />
+            <strong>Ask the agent</strong>
+          </div>
+          <div className="agent-input-row">
+            <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What should I read first today?" />
+            <button disabled={asking}>{asking ? "Thinking" : "Ask"}</button>
+          </div>
+          {answer && <p className="agent-answer">{answer}</p>}
+        </form>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [view, setView] = useState("briefing");
   const [query, setQuery] = useState("");
   const [symbols, setSymbols] = useLocalStorage("news-agent-symbols", DEFAULT_SYMBOLS);
   const [draftSymbols, setDraftSymbols] = useState(symbols);
   const [reflection, setReflection] = useLocalStorage("news-agent-reflection", "");
+  const [interests, setInterests] = useLocalStorage("news-agent-interests", "AI,NVDA,crypto,markets");
   const [savedJson, setSavedJson] = useLocalStorage("news-agent-saved", "[]");
   const [briefing, setBriefing] = useState(null);
   const [aiSummary, setAiSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState("");
+  const [agentReport, setAgentReport] = useState(null);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentQuestion, setAgentQuestion] = useState("");
+  const [agentAnswer, setAgentAnswer] = useState("");
+  const [agentAsking, setAgentAsking] = useState(false);
   const [articles, setArticles] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -225,6 +294,40 @@ function App() {
     }
   }
 
+  async function loadAgent() {
+    setAgentLoading(true);
+    try {
+      const response = await getJson(`/api/agent?interests=${encodeURIComponent(interests)}`);
+      setAgentReport(response);
+    } finally {
+      setAgentLoading(false);
+    }
+  }
+
+  async function askAgent(event) {
+    event.preventDefault();
+    if (!agentQuestion.trim()) return;
+    setAgentAsking(true);
+    setAgentAnswer("");
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: agentQuestion,
+          interests: interests.split(",").map((item) => item.trim()).filter(Boolean)
+        })
+      });
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+      const data = await response.json();
+      setAgentAnswer(data.answer || "No answer generated.");
+    } catch (agentError) {
+      setAgentAnswer(agentError.message);
+    } finally {
+      setAgentAsking(false);
+    }
+  }
+
   async function loadView(nextView = view) {
     setLoading(true);
     setError("");
@@ -240,6 +343,7 @@ function App() {
         ]);
         setUpdatedAt(data.updatedAt);
         loadSummary();
+        loadAgent();
       } else {
         const data = await getJson(`/api/news?category=${nextView}`);
         setArticles(data.items || []);
@@ -273,6 +377,11 @@ function App() {
     const timer = setInterval(() => loadQuotes(), 60000);
     return () => clearInterval(timer);
   }, [symbols]);
+
+  useEffect(() => {
+    const timer = setInterval(loadAgent, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [interests]);
 
   const currentView = VIEWS[view];
 
@@ -338,6 +447,19 @@ function App() {
           </div>
           <span>{updatedAt ? `Updated ${new Date(updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for data"}</span>
         </section>
+
+        <AgentPanel
+          report={agentReport}
+          loading={agentLoading}
+          interests={interests}
+          setInterests={setInterests}
+          onRefresh={loadAgent}
+          question={agentQuestion}
+          setQuestion={setAgentQuestion}
+          answer={agentAnswer}
+          asking={agentAsking}
+          onAsk={askAgent}
+        />
 
         <section className="market-strip">
           <div className="panel-heading">
