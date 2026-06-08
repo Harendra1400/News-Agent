@@ -410,12 +410,83 @@ h1 {
   gap: 10px;
 }
 
+.ai-summary,
 .note,
 .empty {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
   padding: 14px;
+}
+
+.ai-summary h3 {
+  margin: 12px 0 8px;
+  font-size: 1.04rem;
+}
+
+.ai-summary p {
+  color: #41504b;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.summary-header button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 800;
+  padding: 6px 9px;
+}
+
+.mode-pill {
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 0.76rem;
+  font-weight: 850;
+  padding: 5px 8px;
+}
+
+.mode-pill.ai {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.summary-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.summary-block strong {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.summary-block ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #41504b;
+  line-height: 1.45;
+}
+
+.summary-notice {
+  margin-top: 12px !important;
+  color: var(--amber) !important;
+  font-size: 0.86rem;
 }
 
 .note strong {

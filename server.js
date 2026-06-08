@@ -6,6 +6,7 @@ const { URL } = require("url");
 const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DIST_DIR = path.join(__dirname, "dist");
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 
 const FEEDS = {
   world: {
@@ -59,6 +60,19 @@ const MIME_TYPES = {
 };
 
 const cache = new Map();
+
+function loadLocalEnv() {
+  const envPath = path.join(__dirname, ".env");
+  if (!fs.existsSync(envPath)) return;
+  const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/i);
+    if (!match || process.env[match[1]]) continue;
+    process.env[match[1]] = match[2].replace(/^["']|["']$/g, "");
+  }
+}
+
+loadLocalEnv();
 
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -160,6 +174,19 @@ async function fetchWithTimeout(url, timeoutMs = 8000) {
   }
 }
 
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 240)}`);
+    return JSON.parse(text);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadNews(category) {
   const feed = FEEDS[category] || FEEDS.world;
   return cached(`news:${category}`, 10 * 60 * 1000, async () => {
@@ -214,6 +241,94 @@ async function loadQuotes(symbols) {
   });
 }
 
+function compactStories(sections) {
+  return Object.entries(sections).flatMap(([category, items]) =>
+    items.slice(0, 6).map((item) => ({
+      category,
+      source: item.source,
+      title: item.title,
+      summary: item.summary
+    }))
+  );
+}
+
+function fallbackSummary(sections, quotes) {
+  const stories = compactStories(sections);
+  const topTopics = stories
+    .flatMap((item) => `${item.title} ${item.summary}`.toLowerCase().match(/\b(ai|market|trade|security|policy|energy|earnings|rates|crypto|technology|war|startup)\b/g) || [])
+    .reduce((map, word) => map.set(word, (map.get(word) || 0) + 1), new Map());
+  const themes = Array.from(topTopics.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([word]) => word);
+  const positive = quotes.filter((quote) => (quote.changePercent || 0) >= 0).length;
+  const marketMood = positive >= Math.ceil(quotes.length / 2) ? "Watchlist sentiment is mostly positive today." : "Watchlist sentiment is mixed or defensive today.";
+
+  return {
+    mode: "fallback",
+    title: "Daily Briefing Summary",
+    summary: stories.slice(0, 4).map((item) => item.title).join(" ") || "Latest stories are loading.",
+    whyItMatters: "This briefing groups the most recent international, technology, and market headlines so you can quickly scan the day before reading deeper.",
+    keyTrends: themes.length ? themes.map((theme) => `Recurring signal: ${theme}`) : ["Track repeated regions, companies, policies, and sectors."],
+    marketPulse: marketMood,
+    learningQuestion: "Which headline could change market or public sentiment the most today?",
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function parseModelJson(text) {
+  const cleaned = text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
+  return JSON.parse(cleaned);
+}
+
+async function generateAiSummary(sections, quotes) {
+  const fallback = fallbackSummary(sections, quotes);
+  if (!process.env.OPENAI_API_KEY) {
+    return {
+      ...fallback,
+      notice: "Set OPENAI_API_KEY to enable AI-generated summaries."
+    };
+  }
+
+  const input = {
+    stories: compactStories(sections),
+    quotes: quotes.map((quote) => ({
+      symbol: quote.symbol,
+      name: quote.name,
+      price: quote.price,
+      changePercent: quote.changePercent
+    }))
+  };
+
+  try {
+    const response = await fetchJsonWithTimeout("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions: "You are a concise news analyst. Summarize only the supplied headlines and quote data. Do not invent facts. Do not give financial advice. Return valid JSON only.",
+        input: `Create a daily news briefing from this data:\n${JSON.stringify(input)}\n\nReturn JSON with keys: title, summary, whyItMatters, keyTrends, marketPulse, learningQuestion. keyTrends must be an array of 3 short strings.`
+      })
+    }, 30000);
+    const parsed = parseModelJson(response.output_text || "");
+    return {
+      mode: "ai",
+      title: String(parsed.title || fallback.title),
+      summary: String(parsed.summary || fallback.summary),
+      whyItMatters: String(parsed.whyItMatters || fallback.whyItMatters),
+      keyTrends: Array.isArray(parsed.keyTrends) ? parsed.keyTrends.slice(0, 3).map(String) : fallback.keyTrends,
+      marketPulse: String(parsed.marketPulse || fallback.marketPulse),
+      learningQuestion: String(parsed.learningQuestion || fallback.learningQuestion),
+      generatedAt: new Date().toISOString()
+    };
+  } catch (error) {
+    return {
+      ...fallback,
+      notice: `AI summary unavailable: ${error.message}`
+    };
+  }
+}
+
 async function api(req, res, pathname, searchParams) {
   if (pathname === "/api/news") {
     const category = searchParams.get("category") || "world";
@@ -249,6 +364,18 @@ async function api(req, res, pathname, searchParams) {
       sections: { world: world.slice(0, 8), technology: technology.slice(0, 8), markets: markets.slice(0, 8) },
       quotes
     });
+    return;
+  }
+
+  if (pathname === "/api/summary") {
+    const [world, technology, markets, quotes] = await Promise.all([
+      loadNews("world"),
+      loadNews("technology"),
+      loadNews("markets"),
+      loadQuotes(["SPY", "QQQ", "DIA", "NVDA", "AAPL", "MSFT", "TSLA", "BTC"])
+    ]);
+    const sections = { world: world.slice(0, 8), technology: technology.slice(0, 8), markets: markets.slice(0, 8) };
+    sendJson(res, 200, await cached("summary:briefing", 5 * 60 * 1000, () => generateAiSummary(sections, quotes)));
     return;
   }
 

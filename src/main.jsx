@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
+  Bot,
   Bookmark,
   BookmarkCheck,
   Brain,
@@ -11,7 +12,6 @@ import {
   Newspaper,
   RefreshCw,
   Search,
-  Sparkles,
   TrendingUp,
   Wifi
 } from "lucide-react";
@@ -112,42 +112,54 @@ function ArticleCard({ item, saved, onToggleSaved }) {
   );
 }
 
-function NotesPanel({ briefing, reflection, setReflection }) {
-  const notes = useMemo(() => {
-    const sections = briefing?.sections || {};
-    const all = [...(sections.world || []), ...(sections.technology || []), ...(sections.markets || [])];
-    const themes = all
-      .flatMap((item) => item.title.toLowerCase().match(/\b(ai|chip|inflation|rates|election|trade|energy|security|earnings|market|war|climate|startup|policy)\b/g) || [])
-      .reduce((map, word) => map.set(word, (map.get(word) || 0) + 1), new Map());
-    const topThemes = Array.from(themes.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([word]) => word);
-    const quotes = briefing?.quotes || [];
-    const positive = quotes.filter((quote) => (quote.changePercent || 0) >= 0).length;
-    const mood = positive >= Math.ceil(quotes.length / 2) ? "risk appetite looks firmer" : "watchlists are leaning defensive";
-
-    return [
-      ["Pattern to watch", topThemes.length ? `Recurring topics today: ${topThemes.join(", ")}.` : "Track repeated regions, sectors, and policy decisions."],
-      ["Market lens", `Based on your watchlist, ${mood}. Compare price action with the headlines before drawing conclusions.`],
-      ["Daily question", "What event could still change the tone of today's news cycle?"]
-    ];
-  }, [briefing]);
-
+function SummaryPanel({ summary, loading, error, onRefresh, reflection, setReflection }) {
   return (
     <aside className="learning-panel">
       <div className="panel-heading">
         <div>
-          <h2>Learn Today</h2>
-          <p>Turn headlines into understanding</p>
+          <h2>AI Briefing</h2>
+          <p>Concise summary of today's signal</p>
         </div>
-        <Sparkles size={20} />
+        <Bot size={20} />
       </div>
-      <div className="notes">
-        {notes.map(([title, body]) => (
-          <div className="note" key={title}>
-            <strong>{title}</strong>
-            <p>{body}</p>
-          </div>
-        ))}
-      </div>
+
+      <section className="ai-summary">
+        {loading && <div className="empty">Generating briefing...</div>}
+        {error && <div className="empty">Summary unavailable: {error}</div>}
+        {!loading && !error && summary && (
+          <>
+            <div className="summary-header">
+              <span className={summary.mode === "ai" ? "mode-pill ai" : "mode-pill"}>{summary.mode === "ai" ? "AI summary" : "Pattern summary"}</span>
+              <button onClick={onRefresh}>
+                <RefreshCw size={15} />
+                Refresh
+              </button>
+            </div>
+            <h3>{summary.title}</h3>
+            <p>{summary.summary}</p>
+            <div className="summary-block">
+              <strong>Why it matters</strong>
+              <p>{summary.whyItMatters}</p>
+            </div>
+            <div className="summary-block">
+              <strong>Key trends</strong>
+              <ul>
+                {(summary.keyTrends || []).map((trend) => <li key={trend}>{trend}</li>)}
+              </ul>
+            </div>
+            <div className="summary-block">
+              <strong>Market pulse</strong>
+              <p>{summary.marketPulse}</p>
+            </div>
+            <div className="summary-block">
+              <strong>Learning question</strong>
+              <p>{summary.learningQuestion}</p>
+            </div>
+            {summary.notice && <p className="summary-notice">{summary.notice}</p>}
+          </>
+        )}
+      </section>
+
       <label className="reflection">
         <span>Your takeaway</span>
         <textarea value={reflection} onChange={(event) => setReflection(event.target.value)} placeholder="What changed in your understanding today?" />
@@ -164,6 +176,9 @@ function App() {
   const [reflection, setReflection] = useLocalStorage("news-agent-reflection", "");
   const [savedJson, setSavedJson] = useLocalStorage("news-agent-saved", "[]");
   const [briefing, setBriefing] = useState(null);
+  const [aiSummary, setAiSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
   const [articles, setArticles] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -197,6 +212,19 @@ function App() {
     setQuotes(response.quotes || []);
   }
 
+  async function loadSummary() {
+    setSummaryLoading(true);
+    setSummaryError("");
+    try {
+      const response = await getJson("/api/summary");
+      setAiSummary(response);
+    } catch (summaryLoadError) {
+      setSummaryError(summaryLoadError.message);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }
+
   async function loadView(nextView = view) {
     setLoading(true);
     setError("");
@@ -211,6 +239,7 @@ function App() {
           ...data.sections.markets.slice(0, 4)
         ]);
         setUpdatedAt(data.updatedAt);
+        loadSummary();
       } else {
         const data = await getJson(`/api/news?category=${nextView}`);
         setArticles(data.items || []);
@@ -341,7 +370,14 @@ function App() {
             </div>
           </section>
 
-          <NotesPanel briefing={briefing} reflection={reflection} setReflection={setReflection} />
+          <SummaryPanel
+            summary={aiSummary}
+            loading={summaryLoading}
+            error={summaryError}
+            onRefresh={loadSummary}
+            reflection={reflection}
+            setReflection={setReflection}
+          />
         </section>
       </main>
     </div>
