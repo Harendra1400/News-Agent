@@ -324,7 +324,7 @@ async function generateAiSummary(sections, quotes) {
   } catch (error) {
     return {
       ...fallback,
-      notice: `AI summary unavailable: ${error.message}`
+      notice: "AI summary unavailable. Check OPENAI_API_KEY in your hosting environment."
     };
   }
 }
