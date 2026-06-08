@@ -278,6 +278,19 @@ function parseModelJson(text) {
   return JSON.parse(cleaned);
 }
 
+function extractResponseText(response) {
+  if (typeof response.output_text === "string") return response.output_text;
+  const chunks = [];
+  for (const item of response.output || []) {
+    for (const content of item.content || []) {
+      if (content.type === "output_text" && typeof content.text === "string") {
+        chunks.push(content.text);
+      }
+    }
+  }
+  return chunks.join("\n");
+}
+
 async function generateAiSummary(sections, quotes) {
   const fallback = fallbackSummary(sections, quotes);
   if (!process.env.OPENAI_API_KEY) {
@@ -310,7 +323,7 @@ async function generateAiSummary(sections, quotes) {
         input: `Create a daily news briefing from this data:\n${JSON.stringify(input)}\n\nReturn JSON with keys: title, summary, whyItMatters, keyTrends, marketPulse, learningQuestion. keyTrends must be an array of 3 short strings.`
       })
     }, 30000);
-    const parsed = parseModelJson(response.output_text || "");
+    const parsed = parseModelJson(extractResponseText(response));
     return {
       mode: "ai",
       title: String(parsed.title || fallback.title),
