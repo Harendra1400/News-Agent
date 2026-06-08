@@ -6,7 +6,7 @@ const { URL } = require("url");
 const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DIST_DIR = path.join(__dirname, "dist");
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 const FEEDS = {
   world: {
@@ -376,6 +376,16 @@ async function api(req, res, pathname, searchParams) {
     ]);
     const sections = { world: world.slice(0, 8), technology: technology.slice(0, 8), markets: markets.slice(0, 8) };
     sendJson(res, 200, await cached("summary:briefing", 5 * 60 * 1000, () => generateAiSummary(sections, quotes)));
+    return;
+  }
+
+  if (pathname === "/api/ai-status") {
+    const key = process.env.OPENAI_API_KEY || "";
+    sendJson(res, 200, {
+      configured: key.startsWith("sk-"),
+      keyPrefix: key ? key.slice(0, 7) : "",
+      model: OPENAI_MODEL
+    });
     return;
   }
 
