@@ -317,7 +317,7 @@ async function generateAiSummary(sections, quotes) {
   if (!process.env.OPENAI_API_KEY) {
     return {
       ...fallback,
-      notice: "Set OPENAI_API_KEY to enable AI-generated summaries."
+      notice: "Pattern summary active. Add OPENAI_API_KEY to enable AI-generated wording."
     };
   }
 
@@ -423,9 +423,26 @@ async function readJsonBody(req) {
 }
 
 async function answerAgentQuestion(question, context) {
+  const lowerQuestion = question.toLowerCase();
+  const allStories = context.stories || [];
+  const interests = (context.interests || []).map((item) => String(item).toLowerCase()).filter(Boolean);
+  const matchedStories = allStories.filter((story) => {
+    const text = `${story.title} ${story.summary} ${story.category}`.toLowerCase();
+    return interests.some((interest) => text.includes(interest)) || lowerQuestion.split(/\s+/).some((word) => word.length > 3 && text.includes(word));
+  });
+  const storiesToUse = (matchedStories.length ? matchedStories : allStories).slice(0, 3);
+  const movers = (context.quotes || [])
+    .filter((quote) => Math.abs(quote.changePercent || 0) >= 1)
+    .sort((a, b) => Math.abs(b.changePercent || 0) - Math.abs(a.changePercent || 0))
+    .slice(0, 3);
+  const fallbackText = [
+    storiesToUse.length ? `Start with: ${storiesToUse.map((story) => story.title).join(" | ")}` : "I do not see enough headline data yet.",
+    movers.length ? `Market movers to watch: ${movers.map((quote) => `${quote.symbol} ${quote.changePercent.toFixed(2)}%`).join(", ")}.` : "",
+    "This is a rule-based answer from the current briefing. Add OPENAI_API_KEY for deeper AI reasoning."
+  ].filter(Boolean).join(" ");
   const fallbackAnswer = {
     mode: "fallback",
-    answer: "I can monitor the current briefing and highlight patterns, but AI chat needs OPENAI_API_KEY to answer open-ended questions."
+    answer: fallbackText
   };
   if (!question) return fallbackAnswer;
   return openAiJson(
